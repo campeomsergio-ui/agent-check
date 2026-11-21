@@ -1,11 +1,35 @@
-# Agent reliability audit kit (GuraForge)
+# agent-check
 
-One command, one page: checks a Claude Code / agent project setup from files on disk.
+A one-page check of your Claude Code setup. It reads your config files and tells you what will bite you later.
 
-    python3 audit.py /path/to/project --out report.md
+    curl -sO https://raw.githubusercontent.com/campeomsergio-ui/agent-check/main/audit.py
+    python3 audit.py /path/to/your/project
 
-Checks: permissions (bypass mode, whole-tool allows, risky pre-approvals, no deny rules), hooks (missing scripts, missing binaries, swallowed errors), MCP config (plain http, servers that can't start, literal secrets), secrets in tracked files (values never printed), CLAUDE.md/AGENTS.md, .gitignore for .env and settings.local.json.
-Exit code 1 when a high-severity problem is found, so it can run in CI.
-Reads only. Never runs hooks, MCP servers or project code. Python 3 standard library only.
+Python 3, standard library only. It reads files and nothing else. It never runs your hooks, MCP servers or code, and never prints a secret's value.
 
-Tests: `python3 -m unittest discover -s tests`
+## What it looks at
+
+- **Permissions** in `.claude/settings.json`, `.claude/settings.local.json` and your own `~/.claude/settings.json`: bypass mode, whole tools allowed with no limits, risky commands pre-approved, no deny rules.
+- **Hooks**: scripts that don't exist, commands that aren't installed, hooks that hide their own errors.
+- **MCP servers** in `.mcp.json`: plain http, servers that can't start, keys written straight into the file.
+- **Secrets** in tracked files: API keys, tokens, private keys, committed `.env` files.
+- **Basics**: a CLAUDE.md or AGENTS.md, and a `.gitignore` that keeps `.env` and personal settings out of git.
+
+See [a sample report](examples/sample-report.md), made from the deliberately messy project in `examples/messy-project`.
+
+## Options
+
+    python3 audit.py . --out report.md   # write the report to a file
+    python3 audit.py . --no-user         # skip ~/.claude/settings.json
+
+It exits with 1 when something in "Fix first" turns up, so you can run it in CI.
+
+## What it can't tell you
+
+It only sees files. It can't see how the agent behaves in a real session, which tasks fail, or why. If you want a person to look at that, we do it as a fixed-price job: [GuraForge](https://guraforge.com/agent-check/).
+
+## Tests
+
+    python3 -m unittest discover -s tests
+
+MIT licence.

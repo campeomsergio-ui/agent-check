@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Agent reliability audit: reads a project's Claude Code / agent setup from disk and writes a one-page report.
 
-Usage: python3 audit.py [PROJECT_DIR] [--out report.md]
+Usage: python3 audit.py [PROJECT_DIR] [--out report.md] [--no-user]
+Also reads your user-level ~/.claude/settings.json unless --no-user is given.
 Reads files only. Never runs hooks, MCP servers or project code, and never prints secret values.
 """
 import json, os, re, shutil, subprocess, sys
@@ -49,10 +50,12 @@ def project_files(root):
         return files
 
 
-def check_settings(root):
+def check_settings(root, home=None):
     out = []
-    for rel in (".claude/settings.json", ".claude/settings.local.json"):
-        path = root / rel
+    targets = [(rel, root / rel) for rel in (".claude/settings.json", ".claude/settings.local.json")]
+    if home is not None:
+        targets.append(("~/.claude/settings.json", Path(home) / ".claude/settings.json"))
+    for rel, path in targets:
         data, err = load_json(path)
         if err:
             out.append(finding(HIGH, "Settings", f"{rel} is not valid JSON", err[:120], "Fix the JSON; Claude Code ignores a settings file it cannot parse."))
@@ -85,7 +88,8 @@ def check_hooks(root, rel, hooks):
                     continue
                 first = cmd.strip().split()[0].replace("$CLAUDE_PROJECT_DIR", str(root)).replace('"', "")
                 if "/" in first and not Path(first).expanduser().exists():
-                    out.append(finding(HIGH, "Hooks", f"{event} hook points at a missing file", f"{rel}: {first}", "Fix the path or remove the hook; a missing script fails on every event."))
+                    shown = first.replace(str(root), ".", 1)
+                    out.append(finding(HIGH, "Hooks", f"{event} hook points at a missing file", f"{rel}: {shown}", "Fix the path or remove the hook; a missing script fails on every event."))
                 elif "/" not in first and not shutil.which(first) and first not in {"cd", "echo", "test", "["}:
                     out.append(finding(MEDIUM, "Hooks", f"{event} hook needs '{first}', which is not installed here", rel, "Install it or call it by full path, so the hook doesn't fail on other machines."))
                 if re.search(r"\|\|\s*true|2>\s*/dev/null|;\s*exit 0\s*$", cmd):
@@ -146,36 +150,48 @@ def check_basics(root):
     return out
 
 
-def audit(root):
+def audit(root, home=None):
+    """home: folder holding the user's ~/.claude; None skips user-level settings."""
     root = Path(root).resolve()
     files = project_files(root)
-    found = check_basics(root) + check_settings(root) + check_mcp(root) + check_secrets(root, files)
+    found = check_basics(root) + check_settings(root, home) + check_mcp(root) + check_secrets(root, files)
     order = {HIGH: 0, MEDIUM: 1, LOW: 2}
     return sorted(found, key=lambda f: order[f["severity"]])
 
 
+GROUPS = [(HIGH, "Fix first"), (MEDIUM, "Worth fixing"), (LOW, "When you have a minute")]
+
+
 def report(root, findings):
+    name = Path(root).resolve().name
     n = {s: sum(f["severity"] == s for f in findings) for s in (HIGH, MEDIUM, LOW)}
-    verdict = "Fix before relying on this setup." if n[HIGH] else "No blocking problems found." if not findings else "Usable; tidy the items below."
-    lines = [f"# Agent reliability audit: {Path(root).resolve().name}", "",
-             f"**{verdict}** {n[HIGH]} high · {n[MEDIUM]} medium · {n[LOW]} low", ""]
-    if findings:
-        lines += ["| Severity | Area | Problem | Fix |", "|---|---|---|---|"]
-        for f in findings:
-            cell = lambda s: str(s).replace("|", "\\|").replace("\n", " ")
-            lines.append(f"| {f['severity']} | {f['area']} | {cell(f['title'])}: {cell(f['detail'])} | {cell(f['fix'])} |")
-    lines += ["", "Checked from files only: settings and permissions, hooks, MCP config, secrets in tracked files, project instructions.",
-              "Not checked: runtime behaviour, retries inside your code, or what an MCP server does once connected. Secret values are never printed."]
+    if n[HIGH]:
+        top = f"{n[HIGH]} thing{'s' if n[HIGH] > 1 else ''} to fix before you trust this setup."
+    elif findings:
+        top = "Nothing urgent. A few things worth tidying."
+    else:
+        top = "Nothing to fix. This setup looks solid."
+    lines = [f"# {name}: agent setup check", "", f"**{top}**", ""]
+    for sev, heading in GROUPS:
+        items = [f for f in findings if f["severity"] == sev]
+        if not items:
+            continue
+        lines += [f"## {heading}", ""]
+        for i, f in enumerate(items, 1):
+            lines += [f"{i}. **{f['title']}**  ", f"   {f['detail']}  ", f"   Fix: {f['fix']}", ""]
+    lines += ["---", "What this looked at: project and user settings, permissions, hooks, MCP servers, secrets in the repo, project instructions.",
+              "What it can't see: how the agent behaves while running. It only reads files, and never shows a secret's value."]
     return "\n".join(lines) + "\n"
 
 
 def main(argv):
-    args = [a for a in argv if a != "--out"]
+    home = None if "--no-user" in argv else Path.home()
+    args = [a for a in argv if a not in ("--out", "--no-user")]
     out = argv[argv.index("--out") + 1] if "--out" in argv else None
     if out:
         args.remove(out)
     root = args[0] if args else "."
-    findings = audit(root)
+    findings = audit(root, home)
     text = report(root, findings)
     if out:
         Path(out).write_text(text, encoding="utf-8")

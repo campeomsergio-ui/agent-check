@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": ["Bash", "Bash(git push:*)", "Read"]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Edit", "hooks": [{"type": "command", "command": "$CLAUDE_PROJECT_DIR/scripts/format.sh || true"}]}
+    ]
+  }
+}

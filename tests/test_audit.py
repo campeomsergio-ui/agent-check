@@ -20,12 +20,33 @@ def titles(root):
     return [f["title"] for f in audit.audit(root)]
 
 
+class UserSettings(unittest.TestCase):
+    def test_user_level_bypass_is_reported(self):
+        home = project({".claude/settings.json": {"permissions": {"defaultMode": "bypassPermissions"}}})
+        root = project({"CLAUDE.md": "x", ".gitignore": ".env*\n"})
+        got = [f["title"] for f in audit.audit(root, home=home)]
+        self.assertIn("~/.claude/settings.json skips all permission prompts", got)
+
+    def test_missing_user_settings_is_fine(self):
+        root = project({"CLAUDE.md": "x", ".gitignore": ".env*\n"})
+        self.assertEqual(audit.audit(root, home=project({})), [])
+
+
+class Privacy(unittest.TestCase):
+    def test_missing_hook_path_is_shown_relative(self):
+        root = project({"CLAUDE.md": "x", ".gitignore": ".env*\n.claude/settings.local.json\n",
+                        ".claude/settings.json": {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "$CLAUDE_PROJECT_DIR/x.sh"}]}]}}})
+        detail = [f["detail"] for f in audit.audit(root) if "missing file" in f["title"]][0]
+        self.assertNotIn(str(root), detail)
+        self.assertIn("./x.sh", detail)
+
+
 class Clean(unittest.TestCase):
     def test_clean_project_has_no_findings(self):
         root = project({"CLAUDE.md": "Run npm test.", ".gitignore": ".env*\n.claude/settings.local.json\n",
                         ".claude/settings.json": {"permissions": {"allow": ["Bash(npm test:*)"], "deny": ["Read(./.env*)"]}}})
         self.assertEqual(audit.audit(root), [])
-        self.assertIn("No blocking problems", audit.report(root, []))
+        self.assertIn("Nothing to fix", audit.report(root, []))
 
 
 class Problems(unittest.TestCase):
@@ -78,7 +99,7 @@ class Cli(unittest.TestCase):
         r = subprocess.run([sys.executable, str(Path(audit.__file__)), str(root), "--out", str(out)], capture_output=True)
         self.assertEqual(r.returncode, 1)
         text = out.read_text()
-        self.assertIn("Fix before relying on this setup", text)
+        self.assertIn("to fix before you trust this setup", text); self.assertIn("## Fix first", text)
         self.assertLess(len(text.splitlines()), 60)
 
 

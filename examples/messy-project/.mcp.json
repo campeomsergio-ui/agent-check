@@ -1,0 +1,1 @@
+{"mcpServers": {"tickets": {"url": "http://tickets.example.com/mcp", "env": {"API_TOKEN": "example-not-a-real-token"}}}}
