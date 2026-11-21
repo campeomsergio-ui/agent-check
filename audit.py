@@ -5,7 +5,7 @@ Usage: python3 audit.py [PROJECT_DIR] [--out report.md] [--no-user]
 Also reads your user-level ~/.claude/settings.json unless --no-user is given.
 Reads files only. Never runs hooks, MCP servers or project code, and never prints secret values.
 """
-import json, os, re, shutil, subprocess, sys
+import json, os, re, shlex, shutil, subprocess, sys
 from pathlib import Path
 
 HIGH, MEDIUM, LOW = "high", "medium", "low"
@@ -63,6 +63,9 @@ def check_settings(root, home=None):
             continue
         if not data:
             continue
+        if not isinstance(data, dict):
+            out.append(finding(HIGH, "Settings", f"{rel} is not a settings object", "The file holds a list or value, not {...}.", "Wrap the settings in a JSON object; Claude Code can't read this shape."))
+            continue
         perms = data.get("permissions") or {}
         if perms.get("defaultMode") == "bypassPermissions":
             out.append(finding(HIGH, "Permissions", f"{rel} skips all permission prompts", "defaultMode is bypassPermissions.", "Use acceptEdits or default, and allow the specific commands you need."))
@@ -87,7 +90,12 @@ def check_hooks(root, rel, hooks):
                 cmd = str(hook.get("command", ""))
                 if not cmd:
                     continue
-                words = cmd.replace("$CLAUDE_PROJECT_DIR", str(root)).replace("${CLAUDE_PROJECT_DIR}", str(root)).replace('"', "").split()
+                try:
+                    words = shlex.split(cmd.replace("${CLAUDE_PROJECT_DIR}", str(root)).replace("$CLAUDE_PROJECT_DIR", str(root)))
+                except ValueError:
+                    continue  # Shell syntax we can't read safely: say nothing rather than guess.
+                if not words:
+                    continue
                 first = words[0]
                 if Path(first).name in INTERPRETERS and len(words) > 1 and not words[1].startswith("-"):
                     script = words[1]
@@ -109,7 +117,12 @@ def check_mcp(root):
     data, err = load_json(root / ".mcp.json")
     if err:
         return [finding(HIGH, "MCP", ".mcp.json is not valid JSON", err[:120], "Fix the JSON; none of its servers will load.")]
+    if data is not None and not isinstance(data, dict):
+        return [finding(HIGH, "MCP", ".mcp.json is not an object", "Expected {\"mcpServers\": {...}}.", "Fix the shape; none of its servers will load.")]
     for name, srv in ((data or {}).get("mcpServers") or {}).items():
+        if not isinstance(srv, dict):
+            out.append(finding(HIGH, "MCP", f"MCP server '{name}' is not an object", "Its entry is a list or value.", "Give it a command or url inside {...}."))
+            continue
         url, cmd = srv.get("url", ""), srv.get("command", "")
         if url and url.startswith("http://") and not re.match(r"http://(localhost|127\.0\.0\.1|\[::1\])(?:[:/]|$)", url):
             out.append(finding(HIGH, "MCP", f"MCP server '{name}' uses plain http", url[:80], "Use https; tokens and tool results travel in clear text."))
@@ -169,7 +182,7 @@ def audit(root, home=None):
 GROUPS = [(HIGH, "Fix first"), (MEDIUM, "Worth fixing"), (LOW, "When you have a minute")]
 
 
-def report(root, findings):
+def report(root, findings, user=False):
     name = Path(root).resolve().name
     n = {s: sum(f["severity"] == s for f in findings) for s in (HIGH, MEDIUM, LOW)}
     if n[HIGH]:
@@ -177,7 +190,7 @@ def report(root, findings):
     elif findings:
         top = "Nothing urgent. A few things worth tidying."
     else:
-        top = "Nothing to fix. This setup looks solid."
+        top = "No findings in the files checked."
     lines = [f"# {name}: agent setup check", "", f"**{top}**", ""]
     for sev, heading in GROUPS:
         items = [f for f in findings if f["severity"] == sev]
@@ -186,8 +199,10 @@ def report(root, findings):
         lines += [f"## {heading}", ""]
         for i, f in enumerate(items, 1):
             lines += [f"{i}. **{f['title']}**  ", f"   {f['detail']}  ", f"   Fix: {f['fix']}", ""]
-    lines += ["---", "What this looked at: project and user settings, permissions, hooks, MCP servers, secrets in the repo, project instructions.",
-              "What it can't see: how the agent behaves while running. It only reads files, and never shows a secret's value."]
+    scope = "project settings" + (" and your ~/.claude/settings.json" if user else "")
+    lines += ["---", f"What this looked at: {scope}, hooks, MCP config, project files for keys and .env files, project instructions.",
+              "What it can't see: how the agent behaves while running, or whether MCP servers connect. It reads files only.",
+              "Recognised keys are masked. Rules, commands and URLs are quoted, so read the report before you share it."]
     return "\n".join(lines) + "\n"
 
 
@@ -199,7 +214,7 @@ def main(argv):
         args.remove(out)
     root = args[0] if args else "."
     findings = audit(root, home)
-    text = report(root, findings)
+    text = report(root, findings, user=home is not None)
     if out:
         Path(out).write_text(text, encoding="utf-8")
     else:

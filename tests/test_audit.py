@@ -46,7 +46,7 @@ class Clean(unittest.TestCase):
         root = project({"CLAUDE.md": "Run npm test.", ".gitignore": ".env*\n.claude/settings.local.json\n",
                         ".claude/settings.json": {"permissions": {"allow": ["Bash(npm test:*)"], "deny": ["Read(./.env*)"]}}})
         self.assertEqual(audit.audit(root), [])
-        self.assertIn("Nothing to fix", audit.report(root, []))
+        self.assertIn("No findings in the files checked", audit.report(root, []))
 
 
 class Problems(unittest.TestCase):
