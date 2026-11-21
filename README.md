@@ -31,5 +31,6 @@ It only sees files. It can't see how the agent behaves in a real session, which 
 ## Tests
 
     python3 -m unittest discover -s tests
+    python3 tests/fixture_pairs.py .   # 27 projects that should and shouldn't trigger each check
 
 MIT licence.
