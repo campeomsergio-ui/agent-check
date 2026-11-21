@@ -19,6 +19,7 @@ SECRET_PATTERNS = {
 }
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".next", "out"}
 BROAD_ALLOW = re.compile(r"^(?:Bash|Bash\(\*\)|Bash\(\s*\*?\s*:\*\)|\*|Write|Edit|WebFetch)$")
+INTERPRETERS = {"python", "python3", "node", "bash", "sh", "zsh", "ruby", "perl", "deno", "bun"}
 DANGEROUS_ALLOW = re.compile(r"Bash\((?:rm|sudo|curl|wget|git push|chmod|ssh)\b")
 
 
@@ -72,7 +73,7 @@ def check_settings(root, home=None):
         risky = [a for a in allow if DANGEROUS_ALLOW.search(str(a))]
         if risky:
             out.append(finding(MEDIUM, "Permissions", f"{rel} pre-approves risky commands", ", ".join(risky[:5]), "Move these to ask, or narrow them to exact arguments."))
-        if allow and not (perms.get("deny") or []):
+        if broad and not (perms.get("deny") or []):
             out.append(finding(LOW, "Permissions", f"{rel} has no deny rules", "Nothing blocks reading .env or secrets folders.", 'Add deny rules such as "Read(./.env*)" and "Read(./secrets/**)".'))
         out += check_hooks(root, rel, data.get("hooks") or {})
     return out
@@ -86,8 +87,14 @@ def check_hooks(root, rel, hooks):
                 cmd = str(hook.get("command", ""))
                 if not cmd:
                     continue
-                first = cmd.strip().split()[0].replace("$CLAUDE_PROJECT_DIR", str(root)).replace('"', "")
-                if "/" in first and not Path(first).expanduser().exists():
+                words = cmd.replace("$CLAUDE_PROJECT_DIR", str(root)).replace("${CLAUDE_PROJECT_DIR}", str(root)).replace('"', "").split()
+                first = words[0]
+                if Path(first).name in INTERPRETERS and len(words) > 1 and not words[1].startswith("-"):
+                    script = words[1]
+                    if not (root / script).expanduser().exists():
+                        shown = script.replace(str(root), ".", 1)
+                        out.append(finding(HIGH, "Hooks", f"{event} hook points at a missing file", f"{rel}: {shown}", "Fix the path or remove the hook; a missing script fails on every event."))
+                if "/" in first and not (root / first).expanduser().exists() and not Path(first).expanduser().exists():
                     shown = first.replace(str(root), ".", 1)
                     out.append(finding(HIGH, "Hooks", f"{event} hook points at a missing file", f"{rel}: {shown}", "Fix the path or remove the hook; a missing script fails on every event."))
                 elif "/" not in first and not shutil.which(first) and first not in {"cd", "echo", "test", "["}:
@@ -104,9 +111,9 @@ def check_mcp(root):
         return [finding(HIGH, "MCP", ".mcp.json is not valid JSON", err[:120], "Fix the JSON; none of its servers will load.")]
     for name, srv in ((data or {}).get("mcpServers") or {}).items():
         url, cmd = srv.get("url", ""), srv.get("command", "")
-        if url and url.startswith("http://") and not re.match(r"http://(localhost|127\.0\.0\.1)", url):
+        if url and url.startswith("http://") and not re.match(r"http://(localhost|127\.0\.0\.1|\[::1\])(?:[:/]|$)", url):
             out.append(finding(HIGH, "MCP", f"MCP server '{name}' uses plain http", url[:80], "Use https; tokens and tool results travel in clear text."))
-        if cmd and not shutil.which(cmd) and not Path(cmd).exists():
+        if cmd and not cmd.startswith("${") and not shutil.which(cmd) and not Path(cmd).exists():
             out.append(finding(MEDIUM, "MCP", f"MCP server '{name}' can't start here", f"'{cmd}' is not on PATH.", "Install it or use a full path; the server will fail to connect."))
         for key, val in (srv.get("env") or {}).items():
             if isinstance(val, str) and val and not val.startswith("${") and re.search(r"key|token|secret|password", key, re.I):
@@ -136,14 +143,14 @@ def check_secrets(root, files):
 
 def check_basics(root):
     out = []
-    if not any((root / p).exists() for p in ("CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md")):
+    if not any((root / p).exists() for p in ("CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md", "AGENTS.md")):
         out.append(finding(MEDIUM, "Instructions", "No CLAUDE.md or AGENTS.md", "The agent starts every session without project rules.", "Add a short CLAUDE.md: how to build, test, and what never to touch."))
     else:
         for p in ("CLAUDE.md", ".claude/CLAUDE.md"):
             if (root / p).exists() and (root / p).stat().st_size > 40_000:
                 out.append(finding(LOW, "Instructions", f"{p} is very long", f"{(root / p).stat().st_size // 1000} kB loads into every session.", "Keep it short; move detail to linked files."))
     gi = (root / ".gitignore").read_text(errors="ignore") if (root / ".gitignore").exists() else ""
-    if not re.search(r"^\s*\.env", gi, re.M):
+    if not re.search(r"^\s*/?\.env", gi, re.M):
         out.append(finding(MEDIUM, "Secrets", ".env is not in .gitignore", "One git add -A away from leaking keys.", "Add .env* (and keep .env.example)."))
     if (root / ".claude").exists() and "settings.local.json" not in gi:
         out.append(finding(LOW, "Settings", ".claude/settings.local.json is not ignored", "Personal permissions can end up shared.", "Add .claude/settings.local.json to .gitignore."))
