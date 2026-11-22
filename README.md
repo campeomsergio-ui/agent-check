@@ -7,6 +7,14 @@ A one-page check of your Claude Code setup. It reads your config files and tells
 
 Python 3, standard library only. It reads files (git's tracked files when the project is a git repo, otherwise a bounded folder scan) and never runs your hooks, MCP servers or code. Recognised keys are masked, but the report quotes rules, commands and URLs, so read it before you share it.
 
+## Use it as a skill
+
+The repo is also an agent skill (`SKILL.md`). For Claude Code:
+
+    git clone https://github.com/campeomsergio-ui/agent-check ~/.claude/skills/agent-check
+
+Then ask: "check my Claude Code setup".
+
 ## What it looks at
 
 - **Permissions** in `.claude/settings.json`, `.claude/settings.local.json` and your own `~/.claude/settings.json`: bypass mode, whole tools allowed with no limits, risky commands pre-approved, no deny rules.

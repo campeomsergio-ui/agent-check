@@ -206,7 +206,17 @@ def report(root, findings, user=False):
     return "\n".join(lines) + "\n"
 
 
+USAGE = "usage: python3 audit.py [PROJECT_DIR] [--out REPORT.md] [--no-user]\n"
+
+
 def main(argv):
+    if "-h" in argv or "--help" in argv:
+        sys.stdout.write(USAGE)
+        return 0
+    unknown = [a for a in argv if a.startswith("-") and a not in ("--out", "--no-user")]
+    if unknown:
+        sys.stderr.write(f"unknown option {unknown[0]}\n{USAGE}")
+        return 2
     home = None if "--no-user" in argv else Path.home()
     args = [a for a in argv if a not in ("--out", "--no-user")]
     out = argv[argv.index("--out") + 1] if "--out" in argv else None
