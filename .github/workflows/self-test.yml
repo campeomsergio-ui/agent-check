@@ -5,6 +5,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m unittest discover -s tests && for t in fixture_pairs review_fixtures v1_pairs v1_regressions v1_1_fixtures skills_cursor_pairs; do python3 tests/$t.py . || exit 1; done
+      - run: python3 -m unittest discover -s tests && for t in fixture_pairs review_fixtures v1_pairs v1_regressions v1_1_fixtures; do python3 tests/$t.py . || exit 1; done && python3 tests/skills_cursor_pairs.py
       - uses: ./
         with: {path: examples/messy-project, fail-on-high: "false"}
