@@ -1,0 +1,10 @@
+name: self-test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests && for t in fixture_pairs review_fixtures v1_pairs v1_regressions v1_1_fixtures skills_cursor_pairs; do python3 tests/$t.py . || exit 1; done
+      - uses: ./
+        with: {path: examples/messy-project, fail-on-high: "false"}
