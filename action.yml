@@ -1,0 +1,16 @@
+name: agent-check
+description: Check a repo's Claude Code setup (permissions, hooks, MCP, skills, secrets). Reads files only.
+branding: {icon: shield, color: green}
+inputs:
+  path: {description: Project folder to check, default: "."}
+  fail-on-high: {description: Fail the job when something is in Fix first, default: "true"}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set +e
+        python3 "$GITHUB_ACTION_PATH/audit.py" "${{ inputs.path }}" --no-user --format github
+        python3 "$GITHUB_ACTION_PATH/audit.py" "${{ inputs.path }}" --no-user >> "$GITHUB_STEP_SUMMARY"
+        code=$?
+        [ "${{ inputs.fail-on-high }}" = "true" ] && exit $code || exit 0

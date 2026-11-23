@@ -18,7 +18,7 @@ Then ask: "check my Claude Code setup".
 ## What it looks at
 
 - **Permissions** in `.claude/settings.json`, `.claude/settings.local.json` and your own `~/.claude/settings.json`: bypass mode, whole tools allowed with no limits, risky commands pre-approved, no deny rules.
-- **Hooks**: scripts that don't exist, commands that aren't installed, hooks that hide their own errors, hooks switched off by `disableAllHooks`.
+- **Hooks**: scripts that don't exist, commands that aren't installed, hooks that hide their own errors, hooks that pipe a downloaded script into a shell or post data to a URL, hooks switched off by `disableAllHooks`.
 - **MCP servers** in `.mcp.json` and `.cursor/mcp.json`: plain http, servers that can't start, keys written straight into the file, a server both enabled and disabled in settings.
 - **Skills** in `.claude/skills/`: no frontmatter, no description, a name Claude Code won't accept, or a name that differs from its folder.
 - **Secrets** in project files: API keys, tokens, private keys, `.env` files.
@@ -31,7 +31,15 @@ See [a sample report](examples/sample-report.md), made from the deliberately mes
     python3 audit.py . --out report.md   # write the report to a file
     python3 audit.py . --no-user         # skip ~/.claude/settings.json
 
-It exits with 1 when something in "Fix first" turns up, so you can run it in CI.
+    python3 audit.py . --format json     # machine-readable findings
+    python3 audit.py . --format github   # GitHub Actions annotations
+
+It exits with 1 when something in "Fix first" turns up, so you can run it in CI. As a GitHub Action:
+
+    - uses: actions/checkout@v4
+    - uses: campeomsergio-ui/agent-check@main
+
+The Action annotates findings on the run and writes the one-page report to the job summary.
 
 ## What it can't tell you
 

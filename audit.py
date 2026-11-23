@@ -15,12 +15,18 @@ SECRET_PATTERNS = {
     "AWS access key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     "GitHub token": re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b"),
     "Slack token": re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+    "GitHub fine-grained token": re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}"),
+    "Google API key": re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),
+    "Stripe live key": re.compile(r"\b[sr]k_live_[0-9A-Za-z]{20,}"),
+    "Database URL with password": re.compile(r"\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^\s:/@]+:[^\s@/]{3,}@"),
     "Private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
 }
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".next", "out"}
 BROAD_ALLOW = re.compile(r"^(?:Bash|Bash\(\*\)|Bash\(\s*\*?\s*:\*\)|\*|Write|Edit|WebFetch)$")
 INTERPRETERS = {"python", "python3", "node", "bash", "sh", "zsh", "ruby", "perl", "deno", "bun"}
-DANGEROUS_ALLOW = re.compile(r"Bash\((?:rm|sudo|curl|wget|git push|chmod|ssh)\b")
+DANGEROUS_ALLOW = re.compile(r"Bash\((?:rm|sudo|curl|wget|git push|git reset --hard|chmod|ssh|scp|docker)\b")
+REMOTE_EXEC = re.compile(r"(?:curl|wget)\b[^|;]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b")
+EXFIL = re.compile(r"(?:curl|wget)\b.*(?:-d\b|--data|-X\s*POST|-F\b|--upload-file|-T\b)")
 
 
 def finding(sev, area, title, detail, fix):
@@ -159,6 +165,10 @@ def check_hooks(root, rel, hooks):
                     out.append(finding(HIGH, "Hooks", f"{event} hook points at a missing file", f"{rel}: {shown}", "Fix the path or remove the hook; a missing script fails on every event."))
                 elif "/" not in first and not shutil.which(first) and first not in {"cd", "echo", "test", "["}:
                     out.append(finding(MEDIUM, "Hooks", f"{event} hook needs '{first}', which is not installed here", rel, "Install it or call it by full path, so the hook doesn't fail on other machines."))
+                if REMOTE_EXEC.search(cmd):
+                    out.append(finding(HIGH, "Hooks", f"{event} hook downloads and runs a script", cmd[:80], "Vendor the script into the repo and call it by path; a remote script can change under you."))
+                elif EXFIL.search(cmd):
+                    out.append(finding(MEDIUM, "Hooks", f"{event} hook sends data to a URL", cmd.split("?")[0][:80], "Check what it sends and where; hooks see prompts, file paths and tool output."))
                 if re.search(r"\|\|\s*true|2>\s*/dev/null|;\s*exit 0\s*$", cmd):
                     out.append(finding(MEDIUM, "Hooks", f"{event} hook hides its own failures", cmd[:80], "Let it fail loudly, or log the error; a silent hook looks like a working one."))
     return out
@@ -293,18 +303,36 @@ def report(root, findings, user=False):
     return "\n".join(lines) + "\n"
 
 
-USAGE = "usage: python3 audit.py [PROJECT_DIR] [--out REPORT.md] [--no-user]\n"
+USAGE = "usage: python3 audit.py [PROJECT_DIR] [--out REPORT.md] [--no-user] [--format md|json|github]\n"
+
+
+def render(fmt, root, findings, user):
+    if fmt == "json":
+        return json.dumps({"project": Path(root).resolve().name, "findings": findings}, indent=2) + "\n"
+    if fmt == "github":
+        level = {HIGH: "error", MEDIUM: "warning", LOW: "notice"}
+        clean = lambda t: str(t).replace("%", "%25").replace("\r", "").replace("\n", " ")
+        return "".join(f"::{level[f['severity']]} title=agent-check {f['area']}::{clean(f['title'])}: {clean(f['detail'])} Fix: {clean(f['fix'])}\n" for f in findings)
+    return report(root, findings, user)
 
 
 def main(argv):
     if "-h" in argv or "--help" in argv:
         sys.stdout.write(USAGE)
         return 0
-    unknown = [a for a in argv if a.startswith("-") and a not in ("--out", "--no-user")]
+    unknown = [a for a in argv if a.startswith("-") and a not in ("--out", "--no-user", "--format")]
     if unknown:
         sys.stderr.write(f"unknown option {unknown[0]}\n{USAGE}")
         return 2
     home = None if "--no-user" in argv else Path.home()
+    fmt = "md"
+    if "--format" in argv:
+        i = argv.index("--format") + 1
+        if i >= len(argv) or argv[i] not in ("md", "json", "github"):
+            sys.stderr.write(f"--format takes md, json or github\n{USAGE}")
+            return 2
+        fmt = argv[i]
+        argv = argv[:i - 1] + argv[i + 1:]
     args = [a for a in argv if a not in ("--out", "--no-user")]
     out = None
     if "--out" in argv:
@@ -316,7 +344,7 @@ def main(argv):
         args.remove(out)
     root = args[0] if args else "."
     findings = audit(root, home)
-    text = report(root, findings, user=home is not None)
+    text = render(fmt, root, findings, home is not None)
     if out:
         Path(out).write_text(text, encoding="utf-8")
     else:
