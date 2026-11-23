@@ -6,6 +6,7 @@ Also reads your user-level ~/.claude/settings.json unless --no-user is given.
 Reads files only. Never runs hooks, MCP servers or project code, and never prints secret values.
 """
 import json, os, re, shlex, shutil, subprocess, sys
+from urllib.parse import quote
 from pathlib import Path
 
 HIGH, MEDIUM, LOW = "high", "medium", "low"
@@ -29,8 +30,11 @@ REMOTE_EXEC = re.compile(r"(?:curl|wget)\b[^|;]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b")
 EXFIL = re.compile(r"(?:curl|wget)\b.*(?:-d\b|--data|-X\s*POST|-F\b|--upload-file|-T\b)")
 
 
-def finding(sev, area, title, detail, fix):
-    return {"severity": sev, "area": area, "title": title, "detail": detail, "fix": fix}
+def finding(sev, area, title, detail, fix, file=None):
+    f = {"severity": sev, "area": area, "title": title, "detail": detail, "fix": fix}
+    if file:
+        f["file"] = file
+    return f
 
 
 def load_json(path):
@@ -166,11 +170,11 @@ def check_hooks(root, rel, hooks):
                 elif "/" not in first and not shutil.which(first) and first not in {"cd", "echo", "test", "["}:
                     out.append(finding(MEDIUM, "Hooks", f"{event} hook needs '{first}', which is not installed here", rel, "Install it or call it by full path, so the hook doesn't fail on other machines."))
                 if REMOTE_EXEC.search(cmd):
-                    out.append(finding(HIGH, "Hooks", f"{event} hook downloads and runs a script", cmd[:80], "Vendor the script into the repo and call it by path; a remote script can change under you."))
+                    out.append(finding(HIGH, "Hooks", f"{event} hook downloads and runs a script", redact(cmd)[:80], "Vendor the script into the repo and call it by path; a remote script can change under you."))
                 elif EXFIL.search(cmd):
-                    out.append(finding(MEDIUM, "Hooks", f"{event} hook sends data to a URL", cmd.split("?")[0][:80], "Check what it sends and where; hooks see prompts, file paths and tool output."))
+                    out.append(finding(MEDIUM, "Hooks", f"{event} hook sends data to a URL", redact(cmd.split("?")[0])[:80], "Check what it sends and where; hooks see prompts, file paths and tool output."))
                 if re.search(r"\|\|\s*true|2>\s*/dev/null|;\s*exit 0\s*$", cmd):
-                    out.append(finding(MEDIUM, "Hooks", f"{event} hook hides its own failures", f"{rel}: {cmd[:80]}", "Let it fail loudly, or log the error; a silent hook looks like a working one."))
+                    out.append(finding(MEDIUM, "Hooks", f"{event} hook hides its own failures", f"{rel}: {redact(cmd)[:80]}", "Let it fail loudly, or log the error; a silent hook looks like a working one."))
     return out
 
 
@@ -196,7 +200,7 @@ def check_mcp(root, rel=".mcp.json"):
             continue
         url, cmd = srv.get("url", ""), srv.get("command", "")
         if url and url.startswith("http://") and not re.match(r"http://(localhost|127\.0\.0\.1|\[::1\])(?:[:/]|$)", url):
-            out.append(finding(HIGH, "MCP", f"MCP server '{name}' uses plain http", url.split("?")[0][:80], "Use https; tokens and tool results travel in clear text."))
+            out.append(finding(HIGH, "MCP", f"MCP server '{name}' uses plain http", redact(url.split("?")[0])[:80], "Use https; tokens and tool results travel in clear text."))
         if cmd and not cmd.startswith("${") and not shutil.which(cmd) and not Path(cmd).exists():
             out.append(finding(MEDIUM, "MCP", f"MCP server '{name}' can't start here", f"'{cmd}' is not on PATH.", "Install it or use a full path; the server will fail to connect."))
         for key, val in (srv.get("env") or {}).items():
@@ -205,7 +209,7 @@ def check_mcp(root, rel=".mcp.json"):
     return out
 
 
-SKILL_NAME = re.compile(r"^[a-z0-9-]{1,64}$")
+SKILL_NAME = re.compile(r"^(?=.{1,64}$)[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 def check_skills(root):
@@ -226,7 +230,7 @@ def check_skills(root):
         elif len(desc) > 1024:
             out.append(finding(MEDIUM, "Skills", f"{rel} description is over 1024 characters", f"{len(desc)} characters.", "Shorten it; long descriptions can be rejected."))
         if name and not SKILL_NAME.match(name):
-            out.append(finding(MEDIUM, "Skills", f"{rel} name is not lowercase-hyphen", f"name: {name[:40]}", "Portability (Agent Skills spec): use lowercase letters, numbers and hyphens, up to 64 characters."))
+            out.append(finding(MEDIUM, "Skills", f"{rel} name is not lowercase-hyphen", f"name: {redact(name)[:40]}", "Portability (Agent Skills spec): use lowercase letters, numbers and hyphens, up to 64 characters."))
         elif name and name != skill.parent.name:
             out.append(finding(LOW, "Skills", f"{rel} name differs from its folder", f"name: {name}, folder: {skill.parent.name}.", "Make them match so the skill is easy to find and invoke."))
     return out
@@ -248,7 +252,7 @@ def check_secrets(root, files):
         for label, pat in SECRET_PATTERNS.items():
             if pat.search(text) and (rel, label) not in seen:
                 seen.add((rel, label))
-                out.append(finding(HIGH, "Secrets", f"{label} found in {rel}", "Value not shown.", "Rotate the key, then remove it from the file and from git history."))
+                out.append(finding(HIGH, "Secrets", f"{label} found in {rel}", "Value not shown.", "Rotate the key, then remove it from the file and from git history.", file=rel))
     return out
 
 
@@ -331,12 +335,14 @@ def render(fmt, root, findings, user):
             else:
                 m = re.search(r"(?:^|\s)(\.?[\w-]+(?:/[\w.-]+)*\.(?:json|md|gitignore|env[\w.]*)|\.gitignore|\.env[\w.]*)\b", text)
                 where = m.group(1) if m else None
+            if f.get("file"):
+                where = f["file"]
             if f["title"].startswith(".env is not in .gitignore"):
                 where = ".gitignore"
             res = {"ruleId": rid, "level": level[f["severity"]], "message": {"text": f"{f['title']}: {f['detail']} Fix: {f['fix']}"}}
             where = where or ".claude/settings.json"
             if where:
-                res["locations"] = [{"physicalLocation": {"artifactLocation": {"uri": where}}}]
+                res["locations"] = [{"physicalLocation": {"artifactLocation": {"uri": quote(where)}}}]
             results.append(res)
         return json.dumps({"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
                            "runs": [{"tool": {"driver": {"name": "agent-check", "informationUri": "https://github.com/campeomsergio-ui/agent-check", "rules": list(rules.values())}}, "results": results}]}, indent=2) + "\n"
