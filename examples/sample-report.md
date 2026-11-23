@@ -49,6 +49,6 @@
    Fix: Add deny rules such as "Read(./.env*)" and "Read(./secrets/**)".
 
 ---
-What this looked at: project settings, hooks, MCP config, project files for keys and .env files, project instructions.
+What this looked at: project settings, hooks, MCP config (.mcp.json and .cursor/mcp.json), project skills, project files for keys and .env files, project instructions.
 What it can't see: how the agent behaves while running, or whether MCP servers connect. It reads files only.
 Recognised keys are masked. Rules, commands and URLs are quoted, so read the report before you share it.

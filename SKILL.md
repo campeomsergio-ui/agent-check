@@ -1,6 +1,6 @@
 ---
 name: agent-check
-description: Audits a Claude Code project setup and writes a one-page report of what to fix. Checks permissions (bypass mode, unlimited tool allows, risky pre-approved commands, missing deny rules), hooks (missing scripts, uninstalled commands, swallowed errors), MCP servers in .mcp.json (plain http, servers that cannot start, inline keys), secrets in project files, and basics (CLAUDE.md/AGENTS.md, .gitignore for .env). Use when the user asks to check, audit or harden their Claude Code, agent or MCP setup, or before sharing a repo.
+description: Audits a Claude Code project setup and writes a one-page report of what to fix. Checks permissions (bypass mode, unlimited tool allows, risky pre-approved commands, missing deny rules), hooks (missing scripts, uninstalled commands, swallowed errors), MCP servers in .mcp.json and .cursor/mcp.json (plain http, servers that cannot start, inline keys, wrong field types), project skills (missing frontmatter, description or valid name), secrets in project files, and basics (CLAUDE.md/AGENTS.md, .gitignore for .env). Use when the user asks to check, audit or harden their Claude Code, agent or MCP setup, or before sharing a repo.
 license: MIT
 ---
 
