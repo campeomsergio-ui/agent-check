@@ -52,7 +52,7 @@ def project_files(root):
 
 
 def check_settings(root, home=None):
-    out = []
+    out, parsed = [], []
     targets = [(rel, root / rel) for rel in (".claude/settings.json", ".claude/settings.local.json")]
     if home is not None:
         targets.append(("~/.claude/settings.json", Path(home) / ".claude/settings.json"))
@@ -66,7 +66,12 @@ def check_settings(root, home=None):
         if not isinstance(data, dict):
             out.append(finding(HIGH, "Settings", f"{rel} is not a settings object", "The file holds a list or value, not {...}.", "Wrap the settings in a JSON object; Claude Code can't read this shape."))
             continue
-        perms = data.get("permissions") or {}
+        parsed.append((rel, data))
+        perms = data.get("permissions")
+        if perms is not None and not isinstance(perms, dict):
+            out.append(finding(HIGH, "Settings", f"{rel}: permissions must be an object", "permissions is a list or value.", 'Use {"allow": [...], "deny": [...]}; Claude Code ignores this shape.'))
+            perms = {}
+        perms = perms or {}
         if perms.get("defaultMode") == "bypassPermissions":
             out.append(finding(HIGH, "Permissions", f"{rel} skips all permission prompts", "defaultMode is bypassPermissions.", "Use acceptEdits or default, and allow the specific commands you need."))
         allow = perms.get("allow") or []
@@ -78,8 +83,37 @@ def check_settings(root, home=None):
             out.append(finding(MEDIUM, "Permissions", f"{rel} pre-approves risky commands", ", ".join(risky[:5]), "Move these to ask, or narrow them to exact arguments."))
         if broad and not (perms.get("deny") or []):
             out.append(finding(LOW, "Permissions", f"{rel} has no deny rules", "Nothing blocks reading .env or secrets folders.", 'Add deny rules such as "Read(./.env*)" and "Read(./secrets/**)".'))
-        out += check_hooks(root, rel, data.get("hooks") or {})
+        hooks = data.get("hooks")
+        out += check_hooks(root, rel, hooks if isinstance(hooks, dict) else {})
+    out += check_hook_switch(parsed) + check_mcp_approvals(root, parsed)
     return out
+
+
+def check_hook_switch(parsed):
+    """Visible precedence: project-local, then project, then user. First explicit bool wins."""
+    rank = {".claude/settings.local.json": 0, ".claude/settings.json": 1}
+    ordered = sorted(parsed, key=lambda p: rank.get(p[0], 2))
+    switch = next(((rel, d["disableAllHooks"]) for rel, d in ordered if isinstance(d.get("disableAllHooks"), bool)), None)
+    with_hooks = [rel for rel, d in parsed if isinstance(d.get("hooks"), dict) and d["hooks"]]
+    if switch and switch[1] and with_hooks:
+        return [finding(MEDIUM, "Hooks", "configured hooks are disabled", f"Hooks in {', '.join(with_hooks)}; disableAllHooks is true in {switch[0]}.", "Remove disableAllHooks, or delete the hooks you no longer want. Managed and SDK hooks follow their own rules.")]
+    return []
+
+
+def check_mcp_approvals(root, parsed):
+    data, err = load_json(root / ".mcp.json")
+    servers = data.get("mcpServers") if isinstance(data, dict) and not err else None
+    names = set(servers) if isinstance(servers, dict) else set()
+    def where(key):
+        found = {}
+        for rel, d in parsed:
+            vals = d.get(key)
+            for n in vals if isinstance(vals, list) else []:
+                found.setdefault(str(n), []).append(rel)
+        return found
+    on, off = where("enabledMcpjsonServers"), where("disabledMcpjsonServers")
+    return [finding(MEDIUM, "MCP", f"conflicting project MCP approvals for '{n}'", f"Enabled in {', '.join(on[n])}; disabled in {', '.join(off[n])}. Disabled wins.", "Keep one decision for this server so the setup says what it does.")
+            for n in sorted(names & set(on) & set(off))]
 
 
 def check_hooks(root, rel, hooks):
@@ -119,9 +153,12 @@ def check_mcp(root):
         return [finding(HIGH, "MCP", ".mcp.json is not valid JSON", err[:120], "Fix the JSON; none of its servers will load.")]
     if data is not None and not isinstance(data, dict):
         return [finding(HIGH, "MCP", ".mcp.json is not an object", "Expected {\"mcpServers\": {...}}.", "Fix the shape; none of its servers will load.")]
-    for name, srv in ((data or {}).get("mcpServers") or {}).items():
+    servers = (data or {}).get("mcpServers") or {}
+    if not isinstance(servers, dict):
+        return [finding(HIGH, "MCP", "mcpServers must be an object", "Expected {\"name\": {...}}.", "Fix the shape; none of its servers will load.")]
+    for name, srv in servers.items():
         if not isinstance(srv, dict):
-            out.append(finding(HIGH, "MCP", f"MCP server '{name}' is not an object", "Its entry is a list or value.", "Give it a command or url inside {...}."))
+            out.append(finding(HIGH, "MCP", f"MCP server configuration must be an object ('{name}')", "Its entry is a list or value.", "Give it a command or url inside {...}."))
             continue
         url, cmd = srv.get("url", ""), srv.get("command", "")
         if url and url.startswith("http://") and not re.match(r"http://(localhost|127\.0\.0\.1|\[::1\])(?:[:/]|$)", url):

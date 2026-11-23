@@ -18,8 +18,8 @@ Then ask: "check my Claude Code setup".
 ## What it looks at
 
 - **Permissions** in `.claude/settings.json`, `.claude/settings.local.json` and your own `~/.claude/settings.json`: bypass mode, whole tools allowed with no limits, risky commands pre-approved, no deny rules.
-- **Hooks**: scripts that don't exist, commands that aren't installed, hooks that hide their own errors.
-- **MCP servers** in `.mcp.json`: plain http, servers that can't start, keys written straight into the file.
+- **Hooks**: scripts that don't exist, commands that aren't installed, hooks that hide their own errors, hooks switched off by `disableAllHooks`.
+- **MCP servers** in `.mcp.json`: plain http, servers that can't start, keys written straight into the file, a server both enabled and disabled in settings.
 - **Secrets** in project files: API keys, tokens, private keys, `.env` files.
 - **Basics**: a CLAUDE.md or AGENTS.md, and a `.gitignore` that keeps `.env` and personal settings out of git.
 
@@ -41,5 +41,6 @@ It only sees files. It can't see how the agent behaves in a real session, whethe
     python3 -m unittest discover -s tests
     python3 tests/review_fixtures.py .
     python3 tests/fixture_pairs.py .   # 27 pairs: 54 projects that should and shouldn't trigger each check
+    python3 tests/v1_pairs.py .        # 6 pairs: settings shape, disabled hooks, conflicting MCP approvals
 
 MIT licence.
