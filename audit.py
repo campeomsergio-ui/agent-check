@@ -170,7 +170,7 @@ def check_hooks(root, rel, hooks):
                 elif EXFIL.search(cmd):
                     out.append(finding(MEDIUM, "Hooks", f"{event} hook sends data to a URL", cmd.split("?")[0][:80], "Check what it sends and where; hooks see prompts, file paths and tool output."))
                 if re.search(r"\|\|\s*true|2>\s*/dev/null|;\s*exit 0\s*$", cmd):
-                    out.append(finding(MEDIUM, "Hooks", f"{event} hook hides its own failures", cmd[:80], "Let it fail loudly, or log the error; a silent hook looks like a working one."))
+                    out.append(finding(MEDIUM, "Hooks", f"{event} hook hides its own failures", f"{rel}: {cmd[:80]}", "Let it fail loudly, or log the error; a silent hook looks like a working one."))
     return out
 
 
@@ -325,6 +325,7 @@ def render(fmt, root, findings, user):
             if f["title"].startswith(".env is not in .gitignore"):
                 where = ".gitignore"
             res = {"ruleId": rid, "level": level[f["severity"]], "message": {"text": f"{f['title']}: {f['detail']} Fix: {f['fix']}"}}
+            where = where or ".claude/settings.json"
             if where:
                 res["locations"] = [{"physicalLocation": {"artifactLocation": {"uri": where}}}]
             results.append(res)

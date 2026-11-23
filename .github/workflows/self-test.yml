@@ -10,5 +10,5 @@ jobs:
       - uses: ./
         with: {path: examples/messy-project, fail-on-high: "false"}
       - run: python3 audit.py examples/messy-project --no-user --format sarif > agent-check.sarif || [ $? -eq 1 ]
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         with: {sarif_file: agent-check.sarif, category: agent-check-example}

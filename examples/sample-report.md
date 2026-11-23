@@ -35,7 +35,7 @@
    Fix: Move these to ask, or narrow them to exact arguments.
 
 4. **PostToolUse hook hides its own failures**  
-   $CLAUDE_PROJECT_DIR/scripts/format.sh || true  
+   .claude/settings.json: $CLAUDE_PROJECT_DIR/scripts/format.sh || true  
    Fix: Let it fail loudly, or log the error; a silent hook looks like a working one.
 
 ## When you have a minute
