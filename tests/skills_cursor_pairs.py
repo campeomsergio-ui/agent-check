@@ -45,6 +45,17 @@ class Pairs(unittest.TestCase):
         self.assertIn("Database URL with password found in app.env.txt", titles({"app.env.txt": "postgres://u:hunter22@db/x"}))
         self.assertNotIn("Database URL with password found in app.env.txt", titles({"app.env.txt": "postgres://db/x"}))
 
+    def test_sarif_shape(self):
+        import subprocess, sys
+        kit = Path(__file__).resolve().parents[1]
+        out = subprocess.run([sys.executable, str(kit / "audit.py"), str(kit / "examples/messy-project"), "--no-user", "--format", "sarif"], capture_output=True, text=True).stdout
+        run = json.loads(out)["runs"][0]
+        ids = {r["id"] for r in run["tool"]["driver"]["rules"]}
+        self.assertTrue(run["results"])
+        for res in run["results"]:
+            self.assertIn(res["ruleId"], ids)
+            self.assertIn(res["level"], {"error", "warning", "note"})
+
 
 if __name__ == "__main__":
     unittest.main()

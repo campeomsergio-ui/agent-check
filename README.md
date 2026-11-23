@@ -33,13 +33,14 @@ See [a sample report](examples/sample-report.md), made from the deliberately mes
 
     python3 audit.py . --format json     # machine-readable findings
     python3 audit.py . --format github   # GitHub Actions annotations
+    python3 audit.py . --format sarif > agent-check.sarif   # GitHub code scanning
 
 It exits with 1 when something in "Fix first" turns up, so you can run it in CI. As a GitHub Action:
 
     - uses: actions/checkout@v4
     - uses: campeomsergio-ui/agent-check@main
 
-The Action annotates findings on the run and writes the one-page report to the job summary.
+The Action annotates findings on the run and writes the one-page report to the job summary. For the Security tab, upload the SARIF file with `github/codeql-action/upload-sarif`.
 
 ## What it can't tell you
 

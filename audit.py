@@ -303,12 +303,33 @@ def report(root, findings, user=False):
     return "\n".join(lines) + "\n"
 
 
-USAGE = "usage: python3 audit.py [PROJECT_DIR] [--out REPORT.md] [--no-user] [--format md|json|github]\n"
+USAGE = "usage: python3 audit.py [PROJECT_DIR] [--out REPORT.md] [--no-user] [--format md|json|github|sarif]\n"
 
 
 def render(fmt, root, findings, user):
     if fmt == "json":
         return json.dumps({"project": Path(root).resolve().name, "findings": findings}, indent=2) + "\n"
+    if fmt == "sarif":
+        level = {HIGH: "error", MEDIUM: "warning", LOW: "note"}
+        rules, results = {}, []
+        for f in findings:
+            words = [("file" if re.search(r"[/.]\w", w) else w) for w in re.sub(r"'[^']*'", "", f["title"]).split()]
+            rid = re.sub(r"[^a-z0-9]+", "-", f"{f['area']} {' '.join(words)}".lower()).strip("-")
+            rules.setdefault(rid, {"id": rid, "shortDescription": {"text": re.sub(r"'[^']*'", "'…'", f["title"])}, "help": {"text": f["fix"]}})
+            text = f"{f['title']} {f['detail']}"
+            if "MCP" in f["area"] or ".mcp.json" in text:
+                where = ".cursor/mcp.json" if ".cursor/mcp.json" in text else ".mcp.json"
+            else:
+                m = re.search(r"(?:^|\s)(\.?[\w-]+(?:/[\w.-]+)*\.(?:json|md|gitignore|env[\w.]*)|\.gitignore|\.env[\w.]*)\b", text)
+                where = m.group(1) if m else None
+            if f["title"].startswith(".env is not in .gitignore"):
+                where = ".gitignore"
+            res = {"ruleId": rid, "level": level[f["severity"]], "message": {"text": f"{f['title']}: {f['detail']} Fix: {f['fix']}"}}
+            if where:
+                res["locations"] = [{"physicalLocation": {"artifactLocation": {"uri": where}}}]
+            results.append(res)
+        return json.dumps({"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+                           "runs": [{"tool": {"driver": {"name": "agent-check", "informationUri": "https://github.com/campeomsergio-ui/agent-check", "rules": list(rules.values())}}, "results": results}]}, indent=2) + "\n"
     if fmt == "github":
         level = {HIGH: "error", MEDIUM: "warning", LOW: "notice"}
         clean = lambda t: str(t).replace("%", "%25").replace("\r", "").replace("\n", " ")
@@ -328,8 +349,8 @@ def main(argv):
     fmt = "md"
     if "--format" in argv:
         i = argv.index("--format") + 1
-        if i >= len(argv) or argv[i] not in ("md", "json", "github"):
-            sys.stderr.write(f"--format takes md, json or github\n{USAGE}")
+        if i >= len(argv) or argv[i] not in ("md", "json", "github", "sarif"):
+            sys.stderr.write(f"--format takes md, json, github or sarif\n{USAGE}")
             return 2
         fmt = argv[i]
         argv = argv[:i - 1] + argv[i + 1:]
