@@ -9,6 +9,6 @@ jobs:
       - run: python3 -m unittest discover -s tests && for t in fixture_pairs review_fixtures v1_pairs v1_regressions v1_1_fixtures; do python3 tests/$t.py . || exit 1; done && python3 tests/skills_cursor_pairs.py
       - uses: ./
         with: {path: examples/messy-project, fail-on-high: "false"}
-      - run: python3 audit.py examples/messy-project --no-user --format sarif > agent-check.sarif
+      - run: python3 audit.py examples/messy-project --no-user --format sarif > agent-check.sarif || [ $? -eq 1 ]
       - uses: github/codeql-action/upload-sarif@v3
         with: {sarif_file: agent-check.sarif, category: agent-check-example}
