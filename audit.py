@@ -61,7 +61,7 @@ def check_settings(root, home=None):
         if err:
             out.append(finding(HIGH, "Settings", f"{rel} is not valid JSON", err[:120], "Fix the JSON; Claude Code ignores a settings file it cannot parse."))
             continue
-        if not data:
+        if data is None:
             continue
         if not isinstance(data, dict):
             out.append(finding(HIGH, "Settings", f"{rel} is not a settings object", "The file holds a list or value, not {...}.", "Wrap the settings in a JSON object; Claude Code can't read this shape."))
@@ -74,14 +74,18 @@ def check_settings(root, home=None):
         perms = perms or {}
         if perms.get("defaultMode") == "bypassPermissions":
             out.append(finding(HIGH, "Permissions", f"{rel} skips all permission prompts", "defaultMode is bypassPermissions.", "Use acceptEdits or default, and allow the specific commands you need."))
-        allow = perms.get("allow") or []
+        for key in ("allow", "ask", "deny"):
+            val = perms.get(key)
+            if val is not None and not (isinstance(val, list) and all(isinstance(v, str) for v in val)):
+                out.append(finding(HIGH, "Settings", f"{rel}: permissions.{key} must be a list of strings", f"permissions.{key} is {type(val).__name__}.", f'Use "{key}": ["Bash(npm test:*)", ...]; Claude Code can\'t read this shape.'))
+        allow = [a for a in perms.get("allow") or [] if isinstance(a, str)] if isinstance(perms.get("allow"), list) else []
         broad = [a for a in allow if BROAD_ALLOW.match(str(a).strip())]
         if broad:
             out.append(finding(HIGH, "Permissions", f"{rel} allows whole tools without limits", ", ".join(broad), "Replace with narrow rules such as Bash(npm test:*)."))
         risky = [a for a in allow if DANGEROUS_ALLOW.search(str(a))]
         if risky:
             out.append(finding(MEDIUM, "Permissions", f"{rel} pre-approves risky commands", ", ".join(risky[:5]), "Move these to ask, or narrow them to exact arguments."))
-        if broad and not (perms.get("deny") or []):
+        if broad and not perms.get("deny"):
             out.append(finding(LOW, "Permissions", f"{rel} has no deny rules", "Nothing blocks reading .env or secrets folders.", 'Add deny rules such as "Read(./.env*)" and "Read(./secrets/**)".'))
         hooks = data.get("hooks")
         out += check_hooks(root, rel, hooks if isinstance(hooks, dict) else {})
@@ -94,7 +98,9 @@ def check_hook_switch(parsed):
     rank = {".claude/settings.local.json": 0, ".claude/settings.json": 1}
     ordered = sorted(parsed, key=lambda p: rank.get(p[0], 2))
     switch = next(((rel, d["disableAllHooks"]) for rel, d in ordered if isinstance(d.get("disableAllHooks"), bool)), None)
-    with_hooks = [rel for rel, d in parsed if isinstance(d.get("hooks"), dict) and d["hooks"]]
+    def configured(hooks):
+        return isinstance(hooks, dict) and any(isinstance(g, dict) and g.get("hooks") for gs in hooks.values() if isinstance(gs, list) for g in gs)
+    with_hooks = [rel for rel, d in parsed if configured(d.get("hooks"))]
     if switch and switch[1] and with_hooks:
         return [finding(MEDIUM, "Hooks", "configured hooks are disabled", f"Hooks in {', '.join(with_hooks)}; disableAllHooks is true in {switch[0]}.", "Remove disableAllHooks, or delete the hooks you no longer want. Managed and SDK hooks follow their own rules.")]
     return []
@@ -109,7 +115,8 @@ def check_mcp_approvals(root, parsed):
         for rel, d in parsed:
             vals = d.get(key)
             for n in vals if isinstance(vals, list) else []:
-                found.setdefault(str(n), []).append(rel)
+                if isinstance(n, str):
+                    found.setdefault(n, []).append(rel)
         return found
     on, off = where("enabledMcpjsonServers"), where("disabledMcpjsonServers")
     return [finding(MEDIUM, "MCP", f"conflicting project MCP approvals for '{n}'", f"Enabled in {', '.join(on[n])}; disabled in {', '.join(off[n])}. Disabled wins.", "Keep one decision for this server so the setup says what it does.")
@@ -120,8 +127,19 @@ def check_hooks(root, rel, hooks):
     out = []
     for event, groups in hooks.items():
         for group in groups if isinstance(groups, list) else []:
-            for hook in group.get("hooks", []) if isinstance(group, dict) else []:
-                cmd = str(hook.get("command", ""))
+            if not isinstance(group, dict) or not isinstance(group.get("hooks", []), list):
+                out.append(finding(HIGH, "Hooks", f"{event} hook group must be an object with a hooks list", rel, 'Use {"matcher": "...", "hooks": [{"type": "command", "command": "..."}]}.'))
+                continue
+            for i, hook in enumerate(group.get("hooks", [])):
+                if not isinstance(hook, dict):
+                    out.append(finding(HIGH, "Hooks", f"{event} hook entry must be an object", f"{rel}: hooks[{i}] is {type(hook).__name__}.", 'Use {"type": "command", "command": "..."}; this entry is skipped.'))
+                    continue
+                if hook.get("type", "command") != "command":
+                    continue
+                cmd = hook.get("command", "")
+                if not isinstance(cmd, str):
+                    out.append(finding(HIGH, "Hooks", f"{event} hook command must be a string", f"{rel}: hooks[{i}].command is {type(cmd).__name__}.", "Write the command as one string."))
+                    continue
                 if not cmd:
                     continue
                 try:
@@ -153,16 +171,22 @@ def check_mcp(root):
         return [finding(HIGH, "MCP", ".mcp.json is not valid JSON", err[:120], "Fix the JSON; none of its servers will load.")]
     if data is not None and not isinstance(data, dict):
         return [finding(HIGH, "MCP", ".mcp.json is not an object", "Expected {\"mcpServers\": {...}}.", "Fix the shape; none of its servers will load.")]
-    servers = (data or {}).get("mcpServers") or {}
+    servers = (data or {}).get("mcpServers", {})
     if not isinstance(servers, dict):
         return [finding(HIGH, "MCP", "mcpServers must be an object", "Expected {\"name\": {...}}.", "Fix the shape; none of its servers will load.")]
     for name, srv in servers.items():
         if not isinstance(srv, dict):
             out.append(finding(HIGH, "MCP", f"MCP server configuration must be an object ('{name}')", "Its entry is a list or value.", "Give it a command or url inside {...}."))
             continue
+        bad = [k for k, t in (("url", str), ("command", str), ("type", str), ("args", list), ("env", dict), ("headers", dict)) if k in srv and not isinstance(srv[k], t)]
+        for k in bad:
+            want = {"args": "a list", "env": "an object", "headers": "an object"}.get(k, "a string")
+            out.append(finding(HIGH, "MCP", f"MCP server '{name}' {k} must be {want}", f"{k} is {type(srv[k]).__name__}.", "Fix the type; this server won't load."))
+        if bad:
+            continue
         url, cmd = srv.get("url", ""), srv.get("command", "")
         if url and url.startswith("http://") and not re.match(r"http://(localhost|127\.0\.0\.1|\[::1\])(?:[:/]|$)", url):
-            out.append(finding(HIGH, "MCP", f"MCP server '{name}' uses plain http", url[:80], "Use https; tokens and tool results travel in clear text."))
+            out.append(finding(HIGH, "MCP", f"MCP server '{name}' uses plain http", url.split("?")[0][:80], "Use https; tokens and tool results travel in clear text."))
         if cmd and not cmd.startswith("${") and not shutil.which(cmd) and not Path(cmd).exists():
             out.append(finding(MEDIUM, "MCP", f"MCP server '{name}' can't start here", f"'{cmd}' is not on PATH.", "Install it or use a full path; the server will fail to connect."))
         for key, val in (srv.get("env") or {}).items():
@@ -256,8 +280,13 @@ def main(argv):
         return 2
     home = None if "--no-user" in argv else Path.home()
     args = [a for a in argv if a not in ("--out", "--no-user")]
-    out = argv[argv.index("--out") + 1] if "--out" in argv else None
-    if out:
+    out = None
+    if "--out" in argv:
+        i = argv.index("--out") + 1
+        if i >= len(argv) or argv[i].startswith("-"):
+            sys.stderr.write(f"--out needs a file name\n{USAGE}")
+            return 2
+        out = argv[i]
         args.remove(out)
     root = args[0] if args else "."
     findings = audit(root, home)
