@@ -8,9 +8,13 @@ runs:
   using: composite
   steps:
     - shell: bash
+      env:
+        AC_PATH: ${{ inputs.path }}
+        AC_FAIL: ${{ inputs.fail-on-high }}
       run: |
         set +e
-        python3 "$GITHUB_ACTION_PATH/audit.py" "${{ inputs.path }}" --no-user --format github
-        python3 "$GITHUB_ACTION_PATH/audit.py" "${{ inputs.path }}" --no-user >> "$GITHUB_STEP_SUMMARY"
+        python3 "$GITHUB_ACTION_PATH/audit.py" "$AC_PATH" --no-user --format github
         code=$?
-        [ "${{ inputs.fail-on-high }}" = "true" ] && exit $code || exit 0
+        python3 "$GITHUB_ACTION_PATH/audit.py" "$AC_PATH" --no-user >> "$GITHUB_STEP_SUMMARY"
+        [ "$code" -gt 1 ] && exit "$code"
+        [ "$AC_FAIL" = "true" ] && exit "$code" || exit 0

@@ -216,16 +216,17 @@ def check_skills(root):
         text = skill.read_text(encoding="utf-8", errors="ignore")
         m = re.match(r"---\r?\n(.*?)\r?\n---", text, re.S)
         if not m:
-            out.append(finding(HIGH, "Skills", f"{rel} has no frontmatter", "The file doesn't start with a --- block.", "Start it with ---, name: ..., description: ..., ---; without it the skill isn't loaded."))
+            out.append(finding(HIGH, "Skills", f"{rel} has no frontmatter", "The file doesn't start with a --- block.", "Start it with ---, name: ..., description: ..., ---; without it Claude Code may not pick the skill up as intended."))
             continue
         fields = dict(re.findall(r"^([A-Za-z_-]+):\s*(.*)$", m.group(1), re.M))
-        name, desc = fields.get("name", "").strip().strip("'\""), fields.get("description", "").strip()
+        strip = lambda v: re.sub(r"\s+#.*$", "", v).strip() if not v.strip().startswith(("'", '"')) else v.strip()
+        name, desc = strip(fields.get("name", "")).strip("'\""), strip(fields.get("description", ""))
         if not desc:
-            out.append(finding(HIGH, "Skills", f"{rel} has no description", "The agent picks skills by their description.", "Add a description that says what it does and when to use it."))
+            out.append(finding(MEDIUM, "Skills", f"{rel} has no description", "Claude Code falls back to the first paragraph; the agent picks skills by description.", "Add a description that says what it does and when to use it."))
         elif len(desc) > 1024:
             out.append(finding(MEDIUM, "Skills", f"{rel} description is over 1024 characters", f"{len(desc)} characters.", "Shorten it; long descriptions can be rejected."))
         if name and not SKILL_NAME.match(name):
-            out.append(finding(MEDIUM, "Skills", f"{rel} name is not lowercase-hyphen", f"name: {name[:40]}", "Use lowercase letters, numbers and hyphens, up to 64 characters."))
+            out.append(finding(MEDIUM, "Skills", f"{rel} name is not lowercase-hyphen", f"name: {name[:40]}", "Portability (Agent Skills spec): use lowercase letters, numbers and hyphens, up to 64 characters."))
         elif name and name != skill.parent.name:
             out.append(finding(LOW, "Skills", f"{rel} name differs from its folder", f"name: {name}, folder: {skill.parent.name}.", "Make them match so the skill is easy to find and invoke."))
     return out
@@ -306,7 +307,15 @@ def report(root, findings, user=False):
 USAGE = "usage: python3 audit.py [PROJECT_DIR] [--out REPORT.md] [--no-user] [--format md|json|github|sarif]\n"
 
 
+def redact(value):
+    text = str(value)
+    for pat in SECRET_PATTERNS.values():
+        text = pat.sub("[redacted]", text)
+    return text
+
+
 def render(fmt, root, findings, user):
+    findings = [{k: redact(v) for k, v in f.items()} for f in findings]
     if fmt == "json":
         return json.dumps({"project": Path(root).resolve().name, "findings": findings}, indent=2) + "\n"
     if fmt == "sarif":
@@ -333,7 +342,7 @@ def render(fmt, root, findings, user):
                            "runs": [{"tool": {"driver": {"name": "agent-check", "informationUri": "https://github.com/campeomsergio-ui/agent-check", "rules": list(rules.values())}}, "results": results}]}, indent=2) + "\n"
     if fmt == "github":
         level = {HIGH: "error", MEDIUM: "warning", LOW: "notice"}
-        clean = lambda t: str(t).replace("%", "%25").replace("\r", "").replace("\n", " ")
+        clean = lambda t: str(t).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
         return "".join(f"::{level[f['severity']]} title=agent-check {f['area']}::{clean(f['title'])}: {clean(f['detail'])} Fix: {clean(f['fix'])}\n" for f in findings)
     return report(root, findings, user)
 

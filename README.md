@@ -1,6 +1,6 @@
 # agent-check
 
-A one-page check of your Claude Code setup. It reads your config files and tells you what will bite you later.
+A static check of your Claude Code setup. It reads your config files and lists findings with suggested fixes. Recognised keys are redacted in every output format.
 
     curl -fsSLO https://raw.githubusercontent.com/campeomsergio-ui/agent-check/main/audit.py &&
     python3 audit.py /path/to/your/project
@@ -40,7 +40,7 @@ It exits with 1 when something in "Fix first" turns up, so you can run it in CI.
     - uses: actions/checkout@v4
     - uses: campeomsergio-ui/agent-check@main
 
-The Action annotates findings on the run and writes the one-page report to the job summary. For the Security tab, upload the SARIF file with `github/codeql-action/upload-sarif`.
+The Action annotates findings on the run and writes the report to the job summary. For the Security tab, upload the SARIF file with `github/codeql-action/upload-sarif`.
 
 ## What it can't tell you
 
